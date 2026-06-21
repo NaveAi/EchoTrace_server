@@ -1,6 +1,13 @@
 const functions = require("firebase-functions");
-const admin = require("firebase-admin");
-admin.initializeApp();
+const admin = require('firebase-admin');
+const serviceAccount = require('./serviceAccountKey.json'); // או איך שקראת לקובץ המפתח שלך
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+  storageBucket:'echotrace.appspot.com'
+});
+
+const bucket = admin.storage().bucket(); // שורה 6 שלא תזרוק יותר שגיאה!
 
 const db = admin.firestore();
 const bucket = admin.storage().bucket();
