@@ -10,7 +10,6 @@ admin.initializeApp({
 const bucket = admin.storage().bucket(); // שורה 6 שלא תזרוק יותר שגיאה!
 
 const db = admin.firestore();
-const bucket = admin.storage().bucket();
 
 // 1. רישום מכשיר ועדכון FCM Token
 exports.register = functions.https.onRequest(async (req, res) => {
