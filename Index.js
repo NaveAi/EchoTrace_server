@@ -1,9 +1,13 @@
-
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const https = require('https');
+const admin = require('firebase-admin');
+const serviceAccount = require('./serviceAccountKey.json');
+
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+});
 
 const app = express();
 app.use(express.json());
@@ -23,41 +27,23 @@ if (!fs.existsSync(uploadDir)) {
 const connections = {};
 const pairsList = [];
 const tokens = {}; // map myCode -> fcm token
-const fcmKey = process.env.FCM_SERVER_KEY || '';
 
 // הגדרת Multer בזיכרון
 const upload = multer({ storage: multer.memoryStorage() });
 
 function sendFcm(toToken, data) {
-    if (!fcmKey) {
-        console.warn('FCM_SERVER_KEY not configured; skipping push');
-        return;
-    }
-
-    const payload = JSON.stringify({ to: toToken, data: data, priority: 'high' });
-    const options = {
-        hostname: 'fcm.googleapis.com',
-        path: '/fcm/send',
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'key=' + fcmKey,
-            'Content-Length': Buffer.byteLength(payload)
-        }
+    const message = {
+        token: toToken,
+        data: data, // כל הערכים בתוך data חייבים להיות string ב-FCM v1
     };
 
-    const req = https.request(options, (res) => {
-        let body = '';
-        res.on('data', (chunk) => body += chunk);
-        res.on('end', () => console.log(`FCM send result: ${res.statusCode} - ${body}`));
-    });
-
-    req.on('error', (err) => {
-        console.error('FCM send error:', err);
-    });
-
-    req.write(payload);
-    req.end();
+    admin.messaging().send(message)
+        .then((response) => {
+            console.log('FCM send success:', response);
+        })
+        .catch((error) => {
+            console.error('FCM send error:', error);
+        });
 }
 
 // Endpoint for clients to register their FCM token
@@ -75,7 +61,7 @@ app.post('/api/upload', upload.single('image'), (req, res) => {
     console.log("--- START UPLOAD LOG ---");
     console.log("Body:", req.body); // בדיקה אם myCode מגיע
     console.log("File exists:", !!req.file); // בדיקה אם התמונה מגיעה
-    
+
     if (req.file) {
         console.log("File name:", req.file.originalname);
         console.log("File size:", req.file.size);
