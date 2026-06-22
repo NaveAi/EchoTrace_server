@@ -6,120 +6,91 @@ const fs = require('fs');
 const app = express();
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
+// Middleware ללוגים כלליים לכל בקשה שמגיעה
+app.use((req, res, next) => {
+    console.log(`[REQUEST] ${new Date().toISOString()} - ${req.method} ${req.path}`);
+    next();
+});
 
-// תיקיית אחסון זמנית לחלוטין (עד להורדה)
+const PORT = process.env.PORT || 3000;
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir);
 }
 
-// --- מצב בזיכרון (RAM) של השרת ---
-// connections: Map דו-כיוונית code -> partnerCode. תומך בכמה זוגות בו-זמנית,
-// כל זוג מקבל שתי כניסות (אחת לכל כיוון) ואינו משפיע על זוגות אחרים.
 const connections = {};
-
-// pairsList: רשימה שטוחה של כל הזיווגים שנוצרו, לצורכי נראות/דיבוג.
-// לא קריטית ללוגיקה - connections הוא מקור האמת היחיד לניתוב.
 const pairsList = [];
 
-// חשוב: שימוש ב-memoryStorage כדי שהקובץ יישמר בפועל רק בתוך ה-route handler,
-// אחרי ש-req.body מאוכלס לחלוטין. ב-diskStorage הקודם, פונקציית filename()
-// רצה לפני שה-body התמלא (תלוי בסדר השדות ב-FormData), וכל ההעלאות
-// נפלו לשם הקובץ הקבוע "unknown.jpg" והתנגשו אחת בשנייה.
+// הגדרת Multer בזיכרון
 const upload = multer({ storage: multer.memoryStorage() });
+
+// --- נתיב העלאת תמונה ---
 app.post('/api/upload', upload.single('image'), (req, res) => {
-    console.log("Received upload request for code:", req.body.myCode); // <--- הוסף את זה
-    console.log("File exists:", !!req.file); // <--- הוסף את זה
-    // ...
-});
-app.get('/', (req, res) => {
-    res.send('EchoTrace Server 2.0 - Active & Secured. 🚀');
+    console.log("--- START UPLOAD LOG ---");
+    console.log("Body:", req.body); // בדיקה אם myCode מגיע
+    console.log("File exists:", !!req.file); // בדיקה אם התמונה מגיעה
+    
+    if (req.file) {
+        console.log("File name:", req.file.originalname);
+        console.log("File size:", req.file.size);
+    }
+
+    const { myCode } = req.body;
+
+    if (!myCode) {
+        console.error("Upload failed: Missing myCode");
+        return res.status(400).json({ success: false, error: 'Missing myCode' });
+    }
+    if (!req.file) {
+        console.error("Upload failed: No image file received");
+        return res.status(400).json({ success: false, error: 'No image' });
+    }
+
+    const destPath = path.join(uploadDir, `${myCode}.jpg`);
+    try {
+        fs.writeFileSync(destPath, req.file.buffer);
+        console.log(`SUCCESS: Image saved to ${destPath}`);
+        res.json({ success: true });
+    } catch (err) {
+        console.error("File save error:", err);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+    console.log("--- END UPLOAD LOG ---");
 });
 
-// 1. נתיב זיווג - תומך בכמה זוגות נפרדים בו-זמנית
+// --- נתיב זיווג ---
 app.post('/api/pair', (req, res) => {
+    console.log("Pair request body:", req.body);
     const { myCode, partnerCode } = req.body;
 
     if (!myCode || !partnerCode) {
         return res.status(400).json({ success: false, error: 'Missing codes' });
     }
-    if (myCode === partnerCode) {
-        return res.status(400).json({ success: false, error: 'Cannot pair with yourself' });
-    }
 
     connections[myCode] = partnerCode;
     connections[partnerCode] = myCode;
 
-    pairsList.push({
-        codeA: myCode,
-        codeB: partnerCode,
-        createdAt: new Date().toISOString(),
-    });
-
-    console.log(`Pair created: ${myCode} <--> ${partnerCode} (total pairs in memory: ${pairsList.length})`);
+    pairsList.push({ codeA: myCode, codeB: partnerCode, createdAt: new Date().toISOString() });
+    console.log(`Pair created: ${myCode} <--> ${partnerCode}`);
     res.json({ success: true, message: 'Connected' });
 });
 
-// 2. נתיב העלאת תמונה
-app.post('/api/upload', upload.single('image'), (req, res) => {
-    const { myCode } = req.body;
-
-    if (!myCode) {
-        return res.status(400).json({ success: false, error: 'Missing myCode' });
-    }
-    if (!req.file) {
-        return res.status(400).json({ success: false, error: 'No image' });
-    }
-
-    // כאן req.body כבר מאוכלס לגמרי - הקובץ עצמו עדיין רק בזיכרון (req.file.buffer)
-    const destPath = path.join(uploadDir, `${myCode}.jpg`);
-    fs.writeFileSync(destPath, req.file.buffer);
-
-    console.log(`Image uploaded from ${myCode} -> ${destPath}`);
-    res.json({ success: true });
-});
-
-// 3. נתיב הורדה ומחיקה מיידית (השותף מושך ומוחק מהשרת לנצח)
+// --- נתיב הורדה ---
 app.get('/api/download/:myCode', (req, res) => {
     const myCode = req.params.myCode;
     const partnerCode = connections[myCode];
+    console.log(`Download request for partner of ${myCode} (Partner is: ${partnerCode})`);
 
-    if (!partnerCode) {
-        return res.status(404).json({ error: 'No partner connected' });
-    }
+    if (!partnerCode) return res.status(404).json({ error: 'No partner' });
 
     const partnerImagePath = path.join(uploadDir, `${partnerCode}.jpg`);
-
     if (fs.existsSync(partnerImagePath)) {
         res.sendFile(partnerImagePath, (err) => {
-            if (!err) {
-                try {
-                    fs.unlinkSync(partnerImagePath);
-                    console.log(`Image ${partnerCode}.jpg deleted from server after download.`);
-                } catch (unlinkErr) {
-                    console.error('Failed to delete image:', unlinkErr);
-                }
-            }
+            if (!err) fs.unlinkSync(partnerImagePath);
         });
     } else {
-        res.status(404).json({ error: 'No new image available' });
+        res.status(404).json({ error: 'No image found' });
     }
-});
-
-// 4. בדיקת סטטוס חיבור לשותף
-app.get('/api/partner-status/:myCode', (req, res) => {
-    const myCode = req.params.myCode;
-    const partnerCode = connections[myCode];
-    res.json({ connected: !!partnerCode });
-});
-
-// 5. דיבוג: כל הזוגות הפעילים כרגע בזיכרון השרת
-app.get('/api/connections', (req, res) => {
-    res.json({
-        activePairsCount: pairsList.length,
-        pairs: pairsList,
-    });
 });
 
 app.listen(PORT, () => {
