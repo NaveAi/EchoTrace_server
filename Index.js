@@ -28,7 +28,11 @@ const pairsList = [];
 // רצה לפני שה-body התמלא (תלוי בסדר השדות ב-FormData), וכל ההעלאות
 // נפלו לשם הקובץ הקבוע "unknown.jpg" והתנגשו אחת בשנייה.
 const upload = multer({ storage: multer.memoryStorage() });
-
+app.post('/api/upload', upload.single('image'), (req, res) => {
+    console.log("Received upload request for code:", req.body.myCode); // <--- הוסף את זה
+    console.log("File exists:", !!req.file); // <--- הוסף את זה
+    // ...
+});
 app.get('/', (req, res) => {
     res.send('EchoTrace Server 2.0 - Active & Secured. 🚀');
 });
